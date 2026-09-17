@@ -26,4 +26,18 @@ public interface ICommonDataApiClient
     /// then stops, which also releases the upstream rate limit slot.
     /// </summary>
     Task<UpstreamResult> GetPomSampleAsync(int relativeYear, int take, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Packaging rows for a single organisation, typed rather than passed through raw.
+    ///
+    /// Unlike the three methods above, this one backs a real endpoint rather than exploration, so it
+    /// returns a mapped shape and throws on failure instead of reporting the failure as data. A
+    /// provider needs to be able to tell "no rows" from "upstream was unreachable"; UpstreamResult
+    /// deliberately blurs that, which is right for a probe and wrong here.
+    /// </summary>
+    /// <param name="relativeYear">
+    /// Upstream's year convention, which is the submission year plus one. Null for every year.
+    /// </param>
+    Task<IReadOnlyCollection<UpstreamPomRow>> GetOrganisationPomsAsync(
+        int organisationId, int? relativeYear, CancellationToken cancellationToken);
 }

@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Net.Http.Headers;
+using System.Net.Http.Json;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
@@ -96,6 +97,56 @@ public sealed class CommonDataApiClient(
             return Failure("GET", url, stopwatch, ex);
         }
     }
+
+    public async Task<IReadOnlyCollection<UpstreamPomRow>> GetOrganisationPomsAsync(
+        int organisationId, int? relativeYear, CancellationToken cancellationToken)
+    {
+        var path = $"api/pom/{organisationId}";
+        if (relativeYear is not null) path += $"?relativeYear={relativeYear}";
+
+        var url = Absolute(path);
+        var stopwatch = Stopwatch.StartNew();
+
+        using var request = new HttpRequestMessage(HttpMethod.Get, path);
+        AddAuth(request);
+
+        using var response = await httpClient.SendAsync(request, cancellationToken);
+
+        if (!response.IsSuccessStatusCode)
+        {
+            var body = await response.Content.ReadAsStringAsync(cancellationToken);
+
+            logger.LogError(
+                "Common Data API returned {Status} for {Url}. Body={Body}",
+                (int)response.StatusCode, url, Truncate(body));
+
+            // Thrown, not returned. An empty list here would be indistinguishable from an
+            // organisation that reported nothing, and a caller would publish "no data" for what is
+            // really an outage.
+            throw new HttpRequestException(
+                $"Common Data API returned {(int)response.StatusCode} for {url}.");
+        }
+
+        var rows = await response.Content.ReadFromJsonAsync<List<UpstreamPomRow>>(
+                       JsonOptions, cancellationToken)
+                   ?? [];
+
+        stopwatch.Stop();
+        logger.LogInformation(
+            "Read {Count} POM rows for organisation {OrganisationId} in {ElapsedMs}ms",
+            rows.Count, organisationId, stopwatch.ElapsedMilliseconds);
+
+        return rows;
+    }
+
+    /// <summary>
+    /// Web defaults, so camelCase upstream JSON binds. The framework defaults are case sensitive and
+    /// would bind nothing at all, silently returning a list of empty rows rather than failing.
+    /// </summary>
+    private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
+
+    private static string Truncate(string value) =>
+        value.Length <= 500 ? value : value[..500] + "...";
 
     private async Task<UpstreamResult> SendAsync(
         HttpRequestMessage request, CancellationToken cancellationToken)

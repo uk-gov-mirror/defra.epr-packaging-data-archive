@@ -54,7 +54,7 @@ public static class CommonDataPocEndpoints
             {
                 "GET /cd/sync-time",
                 "GET /cd/submissions?organisationReference={ref}&pageSize={n}",
-                "GET /cd/poms?relativeYear={yyyy}&limit={n}"
+                "GET /cd/poms?year={yyyy}&limit={n}"
             },
             note = "Proof of concept. Responses are passed through from the Common Data API unmapped."
         });
@@ -86,23 +86,26 @@ public static class CommonDataPocEndpoints
     }
 
     private static async Task<Results<Ok<UpstreamResult>, BadRequest<ProblemDetails>>> Poms(
-        [FromQuery] int? relativeYear,
+        [FromQuery] int? year,
         [FromQuery] int? limit,
         [FromServices] ICommonDataApiClient client,
         CancellationToken cancellationToken)
     {
-        if (relativeYear is null or < 2020 or > 2100)
+        if (year is null or < 2020 or > 2100)
         {
             return TypedResults.BadRequest(new ProblemDetails
             {
-                Title = "relativeYear is required",
-                Detail = "Provide a four digit PayCal relative year, for example ?relativeYear=2027. "
-                         + "Upstream returns POM rows for the submission year one prior to it.",
+                Title = "year is required",
+                Detail = "Provide the four digit year the packaging data is for, for example ?year=2024, "
+                         + "the same as ?year= on /organisations/{organisationId}/packaging-data.",
                 Status = StatusCodes.Status400BadRequest
             });
         }
 
+        // Same year as the product endpoints, so the probe and the contract never disagree about
+        // what 2024 means. Upstream is PayCal's stream, which speaks in relative years: the year
+        // fees are charged for, one after the data. The upstream URL in the response shows it.
         return TypedResults.Ok(await client.GetPomSampleAsync(
-            relativeYear.Value, limit ?? DefaultLimit, cancellationToken));
+            year.Value + 1, limit ?? DefaultLimit, cancellationToken));
     }
 }

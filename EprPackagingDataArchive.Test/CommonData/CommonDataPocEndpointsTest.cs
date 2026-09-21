@@ -1,5 +1,9 @@
 using System.Net;
 using System.Net.Http.Json;
+using System.Text.Json.Nodes;
+using EprPackagingDataArchive.CommonData.Client;
+using Microsoft.AspNetCore.TestHost;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Extensions.Configuration;
@@ -21,7 +25,7 @@ public class CommonDataPocEndpointsTest
     [InlineData("/cd/diagnostics")]
     [InlineData("/cd/sync-time")]
     [InlineData("/cd/submissions?organisationReference=100123")]
-    [InlineData("/cd/poms?relativeYear=2027")]
+    [InlineData("/cd/poms?year=2024")]
     public async Task Poc_routes_do_not_exist_by_default(string path)
     {
         await using var factory = new ApiTestFactory();
@@ -87,8 +91,9 @@ public class CommonDataPocEndpointsTest
 
     [Theory]
     [InlineData("/cd/poms")]
-    [InlineData("/cd/poms?relativeYear=1999")]
-    public async Task Poms_requires_a_plausible_relative_year(string path)
+    [InlineData("/cd/poms?year=1999")]
+    [InlineData("/cd/poms?relativeYear=2025")]
+    public async Task Poms_requires_a_plausible_year(string path)
     {
         await using var factory = new EnabledPocFactory();
         using var client = factory.CreateClient();
@@ -96,6 +101,65 @@ public class CommonDataPocEndpointsTest
         var response = await client.GetAsync(path, Token);
 
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task Poms_asks_upstream_for_the_relative_year_after_the_requested_year()
+    {
+        var upstream = new RecordingClient();
+        await using var factory = new EnabledPocFactory().WithWebHostBuilder(builder =>
+            builder.ConfigureTestServices(services =>
+                services.AddSingleton<ICommonDataApiClient>(upstream)));
+        using var client = factory.CreateClient();
+
+        var response = await client.GetAsync("/cd/poms?year=2024&limit=7", Token);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        // 2024 packaging data is PayCal's relative year 2025. Getting this wrong returns the
+        // previous year's data with no error, which is why it is pinned.
+        Assert.Equal(2025, upstream.LastRelativeYear);
+        Assert.Equal(7, upstream.LastLimit);
+    }
+
+    [Fact]
+    public async Task Poms_defaults_to_one_hundred_rows()
+    {
+        var upstream = new RecordingClient();
+        await using var factory = new EnabledPocFactory().WithWebHostBuilder(builder =>
+            builder.ConfigureTestServices(services =>
+                services.AddSingleton<ICommonDataApiClient>(upstream)));
+        using var client = factory.CreateClient();
+
+        await client.GetAsync("/cd/poms?year=2024", Token);
+
+        Assert.Equal(100, upstream.LastLimit);
+    }
+
+    private sealed class RecordingClient : ICommonDataApiClient
+    {
+        public int? LastRelativeYear { get; private set; }
+        public int? LastLimit { get; private set; }
+
+        public Task<UpstreamResult> GetPomSampleAsync(int relativeYear, int limit, CancellationToken cancellationToken)
+        {
+            LastRelativeYear = relativeYear;
+            LastLimit = limit;
+            return Task.FromResult(new UpstreamResult
+            {
+                Upstream = new UpstreamCall { Method = "GET", Url = "https://example.invalid", Status = 200, ElapsedMs = 0 },
+                Payload = new JsonObject()
+            });
+        }
+
+        public Task<UpstreamResult> GetLastSyncTimeAsync(CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
+        public Task<UpstreamResult> GetPomSummaryAsync(string organisationReference, int pageSize, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
+        public Task<IReadOnlyCollection<UpstreamPomRow>> GetOrganisationPomsAsync(
+            int organisationId, int? relativeYear, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
     }
 
     /// <summary>Boots the app with the proof of concept switched on and pointed at an unroutable host.</summary>

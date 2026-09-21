@@ -19,6 +19,9 @@ namespace EprPackagingDataArchive.CommonData.Endpoints;
 /// </summary>
 public static class CommonDataPocEndpoints
 {
+    /// <summary>Rows returned by <c>/cd/poms</c> when no <c>limit</c> is given.</summary>
+    public const int DefaultLimit = 100;
+
     public static RouteGroupBuilder MapCommonDataPocEndpoints(this IEndpointRouteBuilder app)
     {
         var group = app.MapGroup("/cd").ExcludeFromDescription();
@@ -51,7 +54,7 @@ public static class CommonDataPocEndpoints
             {
                 "GET /cd/sync-time",
                 "GET /cd/submissions?organisationReference={ref}&pageSize={n}",
-                "GET /cd/poms?relativeYear={yyyy}&take={n}"
+                "GET /cd/poms?relativeYear={yyyy}&limit={n}"
             },
             note = "Proof of concept. Responses are passed through from the Common Data API unmapped."
         });
@@ -84,7 +87,7 @@ public static class CommonDataPocEndpoints
 
     private static async Task<Results<Ok<UpstreamResult>, BadRequest<ProblemDetails>>> Poms(
         [FromQuery] int? relativeYear,
-        [FromQuery] int? take,
+        [FromQuery] int? limit,
         [FromServices] ICommonDataApiClient client,
         CancellationToken cancellationToken)
     {
@@ -100,6 +103,6 @@ public static class CommonDataPocEndpoints
         }
 
         return TypedResults.Ok(await client.GetPomSampleAsync(
-            relativeYear.Value, take ?? 25, cancellationToken));
+            relativeYear.Value, limit ?? DefaultLimit, cancellationToken));
     }
 }

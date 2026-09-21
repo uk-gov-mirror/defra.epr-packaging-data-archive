@@ -215,7 +215,7 @@ public class CommonDataApiPackagingDataProviderTest
         public Task<UpstreamResult> GetPomSummaryAsync(string organisationReference, int pageSize, CancellationToken cancellationToken) =>
             throw new NotSupportedException();
 
-        public Task<UpstreamResult> GetPomSampleAsync(int relativeYear, int take, CancellationToken cancellationToken) =>
+        public Task<UpstreamResult> GetPomSampleAsync(int relativeYear, int limit, CancellationToken cancellationToken) =>
             throw new NotSupportedException();
     }
 }

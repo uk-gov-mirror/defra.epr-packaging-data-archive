@@ -22,10 +22,11 @@ public interface ICommonDataApiClient
 
     /// <summary>
     /// Samples the POM stream. That endpoint returns NDJSON for every producer across a whole year
-    /// with no organisation filter, so this reads only the first <paramref name="take"/> rows and
-    /// then stops, which also releases the upstream rate limit slot.
+    /// with no organisation filter, so this reads only the first <paramref name="limit"/> rows, plus
+    /// one more to learn whether there are others, and then stops, which also releases the upstream
+    /// rate limit slot.
     /// </summary>
-    Task<UpstreamResult> GetPomSampleAsync(int relativeYear, int take, CancellationToken cancellationToken);
+    Task<UpstreamResult> GetPomSampleAsync(int relativeYear, int limit, CancellationToken cancellationToken);
 
     /// <summary>
     /// Packaging rows for a single organisation, typed rather than passed through raw.

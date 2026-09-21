@@ -29,8 +29,9 @@ public class CommonDataApiOptions
     public string? AuthToken { get; init; }
 
     /// <summary>
-    /// Hard cap on rows taken from the POM stream. That endpoint returns a whole year for every
-    /// producer and is rate limited to one caller, so an unbounded read would be antisocial.
+    /// Ceiling on the <c>limit</c> a caller can ask for when sampling the POM stream. That endpoint
+    /// returns a whole year for every producer and is rate limited to one caller, which here means
+    /// dev9 PayCal, so a ceiling stops a stray <c>limit</c> from holding the slot for a full year.
     /// </summary>
-    public int MaxStreamRows { get; init; } = 100;
+    public int MaxStreamRows { get; init; } = 10_000;
 }

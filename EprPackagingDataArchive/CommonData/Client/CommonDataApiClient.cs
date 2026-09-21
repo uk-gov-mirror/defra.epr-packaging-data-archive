@@ -41,9 +41,9 @@ public sealed class CommonDataApiClient(
     }
 
     public async Task<UpstreamResult> GetPomSampleAsync(
-        int relativeYear, int take, CancellationToken cancellationToken)
+        int relativeYear, int limit, CancellationToken cancellationToken)
     {
-        var capped = Math.Clamp(take, 1, _options.MaxStreamRows);
+        var capped = Math.Clamp(limit, 1, _options.MaxStreamRows);
         var path = $"api/paycal/poms/stream?RelativeYear={relativeYear}";
         var url = Absolute(path);
         var stopwatch = Stopwatch.StartNew();
@@ -66,11 +66,14 @@ public sealed class CommonDataApiClient(
             using var reader = new StreamReader(stream);
 
             var rows = new JsonArray();
-            while (rows.Count < capped && await reader.ReadLineAsync(cancellationToken) is { } line)
+            while (rows.Count < capped && await ReadRowAsync(reader, cancellationToken) is { } line)
             {
-                if (string.IsNullOrWhiteSpace(line)) continue;
                 rows.Add(JsonNode.Parse(line));
             }
+
+            // One row of lookahead is the cheapest honest answer to "is that everything?". Upstream
+            // sends no count, and counting would mean reading the whole year.
+            var hasMore = rows.Count == capped && await ReadRowAsync(reader, cancellationToken) is not null;
 
             stopwatch.Stop();
             logger.LogInformation("Sampled {Count} POM rows for relative year {Year}", rows.Count, relativeYear);
@@ -86,8 +89,10 @@ public sealed class CommonDataApiClient(
                 },
                 Payload = new JsonObject
                 {
-                    ["rowsSampled"] = rows.Count,
-                    ["cappedAt"] = capped,
+                    ["limitRequested"] = limit,
+                    ["limit"] = capped,
+                    ["returned"] = rows.Count,
+                    ["hasMore"] = hasMore,
                     ["rows"] = rows
                 }
             };
@@ -196,6 +201,16 @@ public sealed class CommonDataApiClient(
         {
             request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", _options.AuthToken);
         }
+    }
+
+    private static async Task<string?> ReadRowAsync(StreamReader reader, CancellationToken cancellationToken)
+    {
+        while (await reader.ReadLineAsync(cancellationToken) is { } line)
+        {
+            if (!string.IsNullOrWhiteSpace(line)) return line;
+        }
+
+        return null;
     }
 
     private string Absolute(string path) =>

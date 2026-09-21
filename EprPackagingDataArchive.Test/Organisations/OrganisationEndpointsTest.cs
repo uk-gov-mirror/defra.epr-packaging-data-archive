@@ -191,6 +191,11 @@ public class OrganisationEndpointsTest
         Assert.False(first.TryGetProperty("organisation", out _));
         Assert.False(first.TryGetProperty("submissions", out _));
         Assert.False(first.TryGetProperty("packagingDataId", out _));
+
+        // Not paged, so no page key at all rather than "page": null.
+        var meta = doc.RootElement.GetProperty("meta");
+        Assert.True(meta.TryGetProperty("asOf", out _));
+        Assert.False(meta.TryGetProperty("page", out _));
     }
 
     [Fact]

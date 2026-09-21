@@ -1,3 +1,5 @@
+using System.Text.Json.Serialization;
+
 namespace EprPackagingDataArchive.Shared;
 
 /// <summary>
@@ -21,6 +23,8 @@ public sealed record ResponseMeta
     /// <summary>One of <see cref="DataSourceNames"/>. Tells a caller whether they are looking at real data.</summary>
     public required string Source { get; init; }
 
+    /// <summary>Present only on paged collections. Omitted rather than sent as null everywhere else.</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public PageInfo? Page { get; init; }
 }
 

@@ -133,8 +133,7 @@ Every response is wrapped, so a caller can always see how fresh the data is and 
   },
   "meta": {
     "asOf": "2026-08-13T09:00:00+00:00",
-    "source": "stub",
-    "page": null
+    "source": "stub"
   }
 }
 ```
@@ -145,7 +144,8 @@ the start and phases two and three will not break you.
 
 `meta.source` is one of `stub`, `common-data-api` or `projection`.
 
-Collections add `meta.page`:
+Paged collections (`/organisations/{organisationId}/submissions` and
+`/compliance-schemes/{schemeId}/members`) add `meta.page`. Everything else leaves it out:
 
 ```json
 "page": { "number": 1, "size": 50, "total": 412 }
@@ -179,7 +179,7 @@ submission each row came from is on the row, rather than rows being nested under
       "ramRagRating": null
     }
   ],
-  "meta": { "asOf": "2026-09-21T11:51:08+00:00", "source": "common-data-api", "page": null }
+  "meta": { "asOf": "2026-09-21T11:51:08+00:00", "source": "common-data-api" }
 }
 ```
 

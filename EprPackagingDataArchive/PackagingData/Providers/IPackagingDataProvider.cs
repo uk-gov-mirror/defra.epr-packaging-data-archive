@@ -9,11 +9,12 @@ namespace EprPackagingDataArchive.PackagingData.Providers;
 public interface IPackagingDataProvider
 {
     /// <summary>
-    /// The nested organisation, submissions, rows report. Null when the organisation is unknown,
-    /// so the endpoint can 404; an organisation with nothing reported returns an empty submissions
-    /// collection instead, keeping "exists but silent" distinguishable from "does not exist".
+    /// The organisation's packaging data as flat rows, in <see cref="PackagingDataRowOrdering.InReportOrder"/>
+    /// order. Null when the organisation is unknown, so the endpoint can 404; an organisation with
+    /// nothing reported returns an empty collection instead, keeping "exists but silent"
+    /// distinguishable from "does not exist".
     /// </summary>
-    Task<PackagingDataReport?> GetReportAsync(
+    Task<IReadOnlyCollection<PackagingDataRow>?> GetReportAsync(
         string organisationId,
         ReportQuery query,
         CancellationToken cancellationToken = default);
@@ -34,7 +35,7 @@ public interface IPackagingDataProvider
         CancellationToken cancellationToken = default);
 }
 
-/// <summary>Filters for the nested report, per the ticket: year and submission status.</summary>
+/// <summary>Filters for the packaging data rows, per the ticket: year and submission status.</summary>
 public sealed record ReportQuery
 {
     /// <summary>Submission year: 2025 matches 2025-H1, 2025-H2 and 2025-P0. See DECISIONS.md 2.</summary>

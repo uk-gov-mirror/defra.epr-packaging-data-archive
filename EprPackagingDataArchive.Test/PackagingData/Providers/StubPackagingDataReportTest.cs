@@ -3,7 +3,8 @@ using EprPackagingDataArchive.PackagingData.Providers;
 namespace EprPackagingDataArchive.Test.PackagingData.Providers;
 
 /// <summary>
-/// Unit tests for the nested Get Packaging Data report, the shape the ticket describes.
+/// Unit tests for the flat Get Packaging Data rows: one row per packaging line, each carrying the
+/// submission it came from.
 /// </summary>
 public class StubPackagingDataReportTest
 {
@@ -18,57 +19,83 @@ public class StubPackagingDataReportTest
     }
 
     [Fact]
-    public async Task An_organisation_with_no_data_gets_an_empty_report_not_null()
+    public async Task An_organisation_with_no_data_gets_an_empty_list_not_null()
     {
-        var report = await _provider.GetReportAsync("100999", new ReportQuery(), Token);
+        var rows = await _provider.GetReportAsync("100999", new ReportQuery(), Token);
 
-        Assert.NotNull(report);
-        Assert.Equal("100999", report.Organisation.OrganisationId);
-        Assert.Empty(report.Submissions);
+        Assert.NotNull(rows);
+        Assert.Empty(rows);
     }
 
     [Fact]
-    public async Task Nests_rows_under_their_own_submission()
+    public async Task Every_row_carries_its_organisation_and_submission()
     {
-        var report = await _provider.GetReportAsync("100123", new ReportQuery(), Token);
+        var rows = await _provider.GetReportAsync("100123", new ReportQuery(), Token);
 
-        Assert.NotNull(report);
-        Assert.Equal(3, report.Submissions.Count);
-        // Every row belongs to exactly one submission: totals across the nesting equal the estate.
-        Assert.Equal(9, report.Submissions.Sum(s => s.PackagingData.Count));
-        Assert.All(report.Submissions, s => Assert.NotEmpty(s.PackagingData));
+        Assert.NotNull(rows);
+        Assert.Equal(9, rows.Count);
+        Assert.All(rows, r => Assert.Equal("100123", r.OrganisationId));
+        Assert.All(rows, r => Assert.False(string.IsNullOrEmpty(r.SubmissionId)));
+
+        // Three submissions, still distinguishable from the rows alone.
+        Assert.Equal(3, rows.Select(r => r.SubmissionId).Distinct().Count());
+    }
+
+    [Fact]
+    public async Task Rows_come_back_in_period_then_type_then_material_order()
+    {
+        var rows = await _provider.GetReportAsync("100123", new ReportQuery(), Token);
+
+        Assert.NotNull(rows);
+        var keys = rows.Select(r => (r.SubmissionPeriod, r.PackagingType, r.PackagingMaterial)).ToList();
+        var sorted = keys
+            .OrderBy(k => k.SubmissionPeriod, StringComparer.Ordinal)
+            .ThenBy(k => k.PackagingType, StringComparer.Ordinal)
+            .ThenBy(k => k.PackagingMaterial, StringComparer.Ordinal)
+            .ToList();
+        Assert.Equal(sorted, keys);
     }
 
     [Fact]
     public async Task Year_filters_on_the_submission_period_year()
     {
-        var report = await _provider.GetReportAsync("100123", new ReportQuery { Year = 2025 }, Token);
+        var rows = await _provider.GetReportAsync("100123", new ReportQuery { Year = 2025 }, Token);
 
-        Assert.NotNull(report);
+        Assert.NotNull(rows);
         // 2025-H2 accepted and 2025-H1 rejected; the 2026-H1 submission is excluded.
-        Assert.Equal(2, report.Submissions.Count);
-        Assert.All(report.Submissions, s => Assert.StartsWith("2025-", s.SubmissionPeriod));
+        Assert.NotEmpty(rows);
+        Assert.All(rows, r => Assert.StartsWith("2025-", r.SubmissionPeriod));
+        Assert.Equal(2, rows.Select(r => r.SubmissionId).Distinct().Count());
     }
 
     [Fact]
-    public async Task Status_rejected_returns_only_rejected_submissions()
+    public async Task Status_rejected_returns_only_rows_from_rejected_submissions()
     {
-        var report = await _provider.GetReportAsync("100123", new ReportQuery { Status = "rejected" }, Token);
+        var rows = await _provider.GetReportAsync("100123", new ReportQuery { Status = "rejected" }, Token);
 
-        Assert.NotNull(report);
-        var only = Assert.Single(report.Submissions);
-        Assert.Equal("RejectedByRegulator", only.Status);
-        Assert.Equal("2025-H1", only.SubmissionPeriod);
+        Assert.NotNull(rows);
+        Assert.NotEmpty(rows);
+        Assert.All(rows, r => Assert.Equal("rejected", r.Status));
+        Assert.All(rows, r => Assert.Equal("2025-H1", r.SubmissionPeriod));
+    }
+
+    [Fact]
+    public async Task Status_uses_the_same_vocabulary_as_the_real_source()
+    {
+        var rows = await _provider.GetReportAsync("100123", new ReportQuery(), Token);
+
+        Assert.NotNull(rows);
+        // The fixtures say AcceptedByRegulator and so on; the contract says accepted.
+        Assert.All(rows, r => Assert.Contains(r.Status, new[] { "accepted", "rejected", "pending" }));
     }
 
     [Fact]
     public async Task Rows_carry_the_ticket_fields()
     {
-        var report = await _provider.GetReportAsync(
+        var rows = await _provider.GetReportAsync(
             "100123", new ReportQuery { Year = 2025, Status = "rejected" }, Token);
 
-        Assert.NotNull(report);
-        var rows = Assert.Single(report.Submissions).PackagingData;
+        Assert.NotNull(rows);
 
         var subsidiaryRow = Assert.Single(rows, r => r.SubsidiaryId is not null);
         Assert.Equal("100123-S01", subsidiaryRow.SubsidiaryId);

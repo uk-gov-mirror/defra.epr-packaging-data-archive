@@ -111,7 +111,7 @@ static void ConfigureEndpoints(WebApplication app)
     app.MapOrganisationEndpoints();
     app.MapComplianceSchemeEndpoints();
 
-    // Exploratory routes onto the Azure warehouse. Not part of the /v1 contract, excluded from the
+    // Exploratory routes onto the Azure warehouse. Not part of the service contract, excluded from the
     // OpenAPI document, and not mapped at all unless explicitly enabled.
     if (CommonDataRegistration.IsEnabled(app.Configuration))
     {

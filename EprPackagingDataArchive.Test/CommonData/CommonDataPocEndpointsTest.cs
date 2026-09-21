@@ -39,7 +39,7 @@ public class CommonDataPocEndpointsTest
         await using var factory = new ApiTestFactory();
         using var client = factory.CreateClient();
 
-        var response = await client.GetAsync("/v1/organisations/100123", Token);
+        var response = await client.GetAsync("/organisations/100123", Token);
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
     }
@@ -71,7 +71,7 @@ public class CommonDataPocEndpointsTest
 
         // Exploratory routes must not reach a consumer's generated client.
         Assert.DoesNotContain("/cd/", spec);
-        Assert.Contains("/v1/organisations/", spec);
+        Assert.Contains("/organisations/", spec);
     }
 
     [Fact]

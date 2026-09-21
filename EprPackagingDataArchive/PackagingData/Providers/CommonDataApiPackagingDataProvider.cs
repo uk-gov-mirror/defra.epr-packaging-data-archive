@@ -19,7 +19,7 @@ public sealed class CommonDataApiPackagingDataProvider(
     TimeProvider time,
     ILogger<CommonDataApiPackagingDataProvider> logger) : IPackagingDataProvider
 {
-    public async Task<PackagingDataReport?> GetReportAsync(
+    public async Task<IReadOnlyCollection<PackagingDataRow>?> GetReportAsync(
         string organisationId,
         ReportQuery query,
         CancellationToken cancellationToken = default)
@@ -54,30 +54,13 @@ public sealed class CommonDataApiPackagingDataProvider(
         {
             // No rows means no accepted packaging data. That is not the same as "no such
             // organisation", but this source cannot tell the two apart: it only ever sees rows that
-            // survived every PayCal filter. Reporting the organisation with an empty submissions
-            // list keeps that honest, where a 404 would assert something we do not know.
+            // survived every PayCal filter. An empty list keeps that honest, where a 404 would assert
+            // something we do not know.
             logger.LogInformation("No packaging rows upstream for organisation {OrganisationId}", reference);
-
-            return new PackagingDataReport
-            {
-                Organisation = new OrganisationBlock { OrganisationId = organisationId, Name = string.Empty },
-                Submissions = []
-            };
+            return [];
         }
 
-        return new PackagingDataReport
-        {
-            Organisation = new OrganisationBlock
-            {
-                OrganisationId = organisationId,
-                Name = rows.Select(r => r.OrganisationName).FirstOrDefault(n => !string.IsNullOrWhiteSpace(n)) ?? string.Empty
-            },
-            Submissions = rows
-                .GroupBy(r => r.SubmissionPeriod ?? "unknown")
-                .OrderBy(g => g.Key, StringComparer.Ordinal)
-                .Select(g => ToSubmission(reference, g.Key, g.ToList()))
-                .ToList()
-        };
+        return rows.Select(row => ToRow(organisationId, reference, row)).InReportOrder();
     }
 
     /// <summary>
@@ -87,9 +70,15 @@ public sealed class CommonDataApiPackagingDataProvider(
     /// </summary>
     private static int? RelativeYearFor(int? submissionYear) => submissionYear + 1;
 
-    private static SubmissionBlock ToSubmission(int reference, string period, IReadOnlyCollection<UpstreamPomRow> rows) =>
-        new()
+    private static PackagingDataRow ToRow(string organisationId, int reference, UpstreamPomRow row)
+    {
+        var period = row.SubmissionPeriod.NullIfBlank() ?? "unknown";
+
+        return new PackagingDataRow
         {
+            OrganisationId = organisationId,
+            SubsidiaryId = row.SubsidiaryId.NullIfBlank(),
+
             // Upstream returns no submission identifier, so one is derived from the two things that
             // do identify it. Deriving it keeps the value stable across calls, which a random id
             // would not, and a consumer can still use it as an opaque key.
@@ -98,21 +87,11 @@ public sealed class CommonDataApiPackagingDataProvider(
 
             // Always accepted, because the procedure filters on it. Stated rather than inferred.
             Status = "accepted",
-            PackagingData = rows.Select(row => ToRow(reference, period, row)).ToList()
-        };
-
-    private static PackagingRow ToRow(int reference, string period, UpstreamPomRow row) =>
-        new()
-        {
-            // Also derived. Upstream POM rows carry no key of their own; the underlying table has no
-            // primary key at all.
-            PackagingDataId = $"{reference}-{period}-{row.PackagingType}-{row.PackagingMaterial}-{row.PackagingClass}",
-            SubsidiaryId = row.SubsidiaryId,
-            PackagingActivity = row.PackagingActivity ?? string.Empty,
-            PackagingType = row.PackagingType ?? string.Empty,
-            PackagingClass = row.PackagingClass ?? string.Empty,
-            PackagingMaterial = row.PackagingMaterial ?? string.Empty,
-            PackagingMaterialSubtype = row.PackagingMaterialSubtype,
+            PackagingActivity = row.PackagingActivity.NullIfBlank() ?? string.Empty,
+            PackagingType = row.PackagingType.NullIfBlank() ?? string.Empty,
+            PackagingClass = row.PackagingClass.NullIfBlank(),
+            PackagingMaterial = row.PackagingMaterial.NullIfBlank() ?? string.Empty,
+            PackagingMaterialSubtype = row.PackagingMaterialSubtype.NullIfBlank(),
             PackagingMaterialWeight = (decimal)(row.PackagingMaterialWeight ?? 0d),
 
             // Converted at the boundary, per Shared/Nation.cs. Upstream speaks EN/NI/SC/WS.
@@ -120,16 +99,17 @@ public sealed class CommonDataApiPackagingDataProvider(
 
             // The upstream procedure excludes exports, so this is always null by construction.
             ToCountry = null,
-            RamRagRating = row.RamRagRating
+            RamRagRating = row.RamRagRating.NullIfBlank()
         };
+    }
 
     /// <summary>
     /// Falls back to the raw value rather than throwing on an unrecognised nation code. A single
     /// unexpected code should not fail a whole report, and passing it through makes it visible.
     /// </summary>
-    private static string NationOrRaw(string? code)
+    private static string? NationOrRaw(string? code)
     {
-        if (string.IsNullOrWhiteSpace(code)) return string.Empty;
+        if (string.IsNullOrWhiteSpace(code)) return null;
 
         try
         {

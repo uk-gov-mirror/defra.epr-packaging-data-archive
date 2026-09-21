@@ -15,7 +15,7 @@ public class ComplianceSchemeEndpointsTest
         await using var factory = new ApiTestFactory();
         using var client = factory.CreateClient();
 
-        var response = await client.GetAsync($"/v1/compliance-schemes/{SchemeId}/members", cancellationToken);
+        var response = await client.GetAsync($"/compliance-schemes/{SchemeId}/members", cancellationToken);
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
 
         var envelope = await response.ReadEnvelopeAsync<IReadOnlyCollection<SchemeMember>>(cancellationToken);
@@ -33,7 +33,7 @@ public class ComplianceSchemeEndpointsTest
 
         // Departed Packaging left on 2026-03-31, so it was not a member in June.
         var response = await client.GetAsync(
-            $"/v1/compliance-schemes/{SchemeId}/members?asAt=2026-06-30", cancellationToken);
+            $"/compliance-schemes/{SchemeId}/members?asAt=2026-06-30", cancellationToken);
         var envelope = await response.ReadEnvelopeAsync<IReadOnlyCollection<SchemeMember>>(cancellationToken);
 
         Assert.DoesNotContain(envelope.Data, m => m.OrganisationId == "100777");
@@ -47,7 +47,7 @@ public class ComplianceSchemeEndpointsTest
         await using var factory = new ApiTestFactory();
         using var client = factory.CreateClient();
 
-        var response = await client.GetAsync("/v1/compliance-schemes/CS-999/members", cancellationToken);
+        var response = await client.GetAsync("/compliance-schemes/CS-999/members", cancellationToken);
 
         Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
     }
@@ -60,7 +60,7 @@ public class ComplianceSchemeEndpointsTest
         using var client = factory.CreateClient();
 
         var response = await client.GetAsync(
-            $"/v1/compliance-schemes/{SchemeId}/reporting-status?submissionPeriod=2026-H1", cancellationToken);
+            $"/compliance-schemes/{SchemeId}/reporting-status?submissionPeriod=2026-H1", cancellationToken);
         var envelope = await response.ReadEnvelopeAsync<SchemeReportingStatus>(cancellationToken);
 
         Assert.Equal(3, envelope.Data.Summary.Members);
@@ -84,7 +84,7 @@ public class ComplianceSchemeEndpointsTest
         using var client = factory.CreateClient();
 
         var response = await client.GetAsync(
-            $"/v1/compliance-schemes/{SchemeId}/reporting-status", cancellationToken);
+            $"/compliance-schemes/{SchemeId}/reporting-status", cancellationToken);
 
         // "Who has not reported" is meaningless without a period, so this is a 400 rather than a default.
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
@@ -98,7 +98,7 @@ public class ComplianceSchemeEndpointsTest
         using var client = factory.CreateClient();
 
         var response = await client.GetAsync(
-            $"/v1/compliance-schemes/{SchemeId}/packaging-data/summary?submissionPeriod=2026-H1",
+            $"/compliance-schemes/{SchemeId}/packaging-data/summary?submissionPeriod=2026-H1",
             cancellationToken);
         var envelope = await response.ReadEnvelopeAsync<SchemePackagingDataSummary>(cancellationToken);
 

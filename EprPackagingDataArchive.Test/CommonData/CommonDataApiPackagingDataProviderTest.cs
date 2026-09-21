@@ -45,30 +45,34 @@ public class CommonDataApiPackagingDataProviderTest
         };
 
     [Fact]
-    public async Task Rows_are_grouped_into_one_submission_per_period()
+    public async Task Rows_come_back_flat_with_their_submission_on_each_row()
     {
         var provider = ProviderFor(
             Row(period: "2024-H1", material: "PL"),
             Row(period: "2024-H1", material: "GL"),
             Row(period: "2024-H2", material: "PL"));
 
-        var report = await provider.GetReportAsync("100005", new ReportQuery(), TestContext.Current.CancellationToken);
+        var rows = await provider.GetReportAsync("100005", new ReportQuery(), TestContext.Current.CancellationToken);
 
-        Assert.NotNull(report);
-        Assert.Equal(2, report.Submissions.Count);
-        Assert.Equal(["2024-H1", "2024-H2"], report.Submissions.Select(s => s.SubmissionPeriod));
-        Assert.Equal(2, report.Submissions.First().PackagingData.Count);
+        Assert.NotNull(rows);
+        Assert.Equal(3, rows.Count);
+        Assert.All(rows, r => Assert.Equal("100005", r.OrganisationId));
+        Assert.Equal(["100005-2024-H1", "100005-2024-H1", "100005-2024-H2"], rows.Select(r => r.SubmissionId));
     }
 
     [Fact]
-    public async Task Organisation_name_comes_from_the_rows()
+    public async Task Rows_are_ordered_by_period_then_type_then_material()
     {
-        var provider = ProviderFor(Row());
+        var provider = ProviderFor(
+            Row(period: "2024-H2", material: "PL"),
+            Row(period: "2024-H1", material: "PL"),
+            Row(period: "2024-H1", material: "GL"));
 
-        var report = await provider.GetReportAsync("100005", new ReportQuery(), TestContext.Current.CancellationToken);
+        var rows = await provider.GetReportAsync("100005", new ReportQuery(), TestContext.Current.CancellationToken);
 
-        Assert.Equal("Test Producer Ltd", report!.Organisation.Name);
-        Assert.Equal("100005", report.Organisation.OrganisationId);
+        Assert.Equal(
+            [("2024-H1", "GL"), ("2024-H1", "PL"), ("2024-H2", "PL")],
+            rows!.Select(r => (r.SubmissionPeriod, r.PackagingMaterial)));
     }
 
     [Fact]
@@ -76,10 +80,9 @@ public class CommonDataApiPackagingDataProviderTest
     {
         var provider = ProviderFor(Row(fromCountry: "EN"), Row(material: "GL", fromCountry: "WS"));
 
-        var report = await provider.GetReportAsync("100005", new ReportQuery(), TestContext.Current.CancellationToken);
+        var rows = await provider.GetReportAsync("100005", new ReportQuery(), TestContext.Current.CancellationToken);
 
-        var nations = report!.Submissions.Single().PackagingData.Select(r => r.FromCountry).ToList();
-
+        var nations = rows!.Select(r => r.FromCountry).ToList();
         Assert.Contains(Nation.England, nations);
         Assert.Contains(Nation.Wales, nations);
     }
@@ -89,19 +92,44 @@ public class CommonDataApiPackagingDataProviderTest
     {
         var provider = ProviderFor(Row(fromCountry: "ZZ"));
 
-        var report = await provider.GetReportAsync("100005", new ReportQuery(), TestContext.Current.CancellationToken);
+        var rows = await provider.GetReportAsync("100005", new ReportQuery(), TestContext.Current.CancellationToken);
 
-        Assert.Equal("ZZ", report!.Submissions.Single().PackagingData.Single().FromCountry);
+        Assert.Equal("ZZ", rows!.Single().FromCountry);
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("   ")]
+    [InlineData(null)]
+    public async Task A_missing_nation_is_null_not_an_empty_string(string? fromCountry)
+    {
+        // Real dev data sends "" on every row. The contract says absent is null.
+        var provider = ProviderFor(Row(fromCountry: fromCountry!));
+
+        var rows = await provider.GetReportAsync("100005", new ReportQuery(), TestContext.Current.CancellationToken);
+
+        Assert.Null(rows!.Single().FromCountry);
     }
 
     [Fact]
-    public async Task Every_submission_is_reported_as_accepted_because_the_source_returns_nothing_else()
+    public async Task A_blank_packaging_class_is_null()
     {
-        var provider = ProviderFor(Row());
+        // HDC glass rows arrive with no class.
+        var provider = ProviderFor(Row() with { PackagingType = "HDC", PackagingMaterial = "GL", PackagingClass = "" });
 
-        var report = await provider.GetReportAsync("100005", new ReportQuery(), TestContext.Current.CancellationToken);
+        var rows = await provider.GetReportAsync("100005", new ReportQuery(), TestContext.Current.CancellationToken);
 
-        Assert.All(report!.Submissions, submission => Assert.Equal("accepted", submission.Status));
+        Assert.Null(rows!.Single().PackagingClass);
+    }
+
+    [Fact]
+    public async Task Every_row_is_reported_as_accepted_because_the_source_returns_nothing_else()
+    {
+        var provider = ProviderFor(Row(), Row(period: "2024-H2"));
+
+        var rows = await provider.GetReportAsync("100005", new ReportQuery(), TestContext.Current.CancellationToken);
+
+        Assert.All(rows!, r => Assert.Equal("accepted", r.Status));
     }
 
     [Fact]
@@ -127,14 +155,14 @@ public class CommonDataApiPackagingDataProviderTest
     }
 
     [Fact]
-    public async Task An_organisation_with_no_rows_is_reported_with_an_empty_submission_list()
+    public async Task An_organisation_with_no_rows_gets_an_empty_list_not_null()
     {
         var provider = ProviderFor();
 
-        var report = await provider.GetReportAsync("100005", new ReportQuery(), TestContext.Current.CancellationToken);
+        var rows = await provider.GetReportAsync("100005", new ReportQuery(), TestContext.Current.CancellationToken);
 
-        Assert.NotNull(report);
-        Assert.Empty(report.Submissions);
+        Assert.NotNull(rows);
+        Assert.Empty(rows);
     }
 
     [Fact]
@@ -142,13 +170,13 @@ public class CommonDataApiPackagingDataProviderTest
     {
         var provider = ProviderFor(Row());
 
-        var report = await provider.GetReportAsync("not-a-reference", new ReportQuery(), TestContext.Current.CancellationToken);
+        var rows = await provider.GetReportAsync("not-a-reference", new ReportQuery(), TestContext.Current.CancellationToken);
 
-        Assert.Null(report);
+        Assert.Null(rows);
     }
 
     [Fact]
-    public async Task Asking_for_rejected_submissions_fails_rather_than_returning_an_empty_report()
+    public async Task Asking_for_rejected_submissions_fails_rather_than_returning_an_empty_list()
     {
         var provider = ProviderFor(Row());
 
@@ -161,9 +189,9 @@ public class CommonDataApiPackagingDataProviderTest
     {
         var provider = ProviderFor(Row(weight: 334343.5d));
 
-        var report = await provider.GetReportAsync("100005", new ReportQuery(), TestContext.Current.CancellationToken);
+        var rows = await provider.GetReportAsync("100005", new ReportQuery(), TestContext.Current.CancellationToken);
 
-        Assert.Equal(334343.5m, report!.Submissions.Single().PackagingData.Single().PackagingMaterialWeight);
+        Assert.Equal(334343.5m, rows!.Single().PackagingMaterialWeight);
     }
 
     private sealed class FakeCommonDataApiClient(IReadOnlyCollection<UpstreamPomRow> rows) : ICommonDataApiClient

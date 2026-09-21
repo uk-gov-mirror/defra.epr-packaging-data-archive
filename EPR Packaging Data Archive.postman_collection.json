@@ -2,13 +2,1105 @@
   "info": {
     "_postman_id": "69860820-69b5-43b6-88f2-17e2f5cf3031",
     "name": "EPR Packaging Data Archive",
-    "description": "Demo collection for epr-packaging-data-archive. Folder order follows the demo run sheet. Local requests need the service running (dotnet run --project EprPackagingDataArchive); CDP requests need cdpApiKey set to a Developer API key from the CDP Portal.",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
-    "_exporter_id": "254787"
+    "description": "Requests for epr-packaging-data-archive. GET /organisations/{id}/packaging-data returns flat rows, one per packaging line, each carrying the submission it came from, and can serve real data from the Common Data API.\n\nTHREE FOLDERS, THREE SETUPS\n\n1. CDP dev, real data. Needs the AWS OpenVPN and `cdpApiKey` set to a Developer API key (CDP Portal, your profile). Requests go through the ephemeral-protected endpoint because a protected-zone service is not reachable directly.\n\n2. Local, real data. Needs the Azure VPN and the service started in CommonDataApi mode:\n   ASPNETCORE_ENVIRONMENT=Development ASPNETCORE_URLS=http://localhost:8085 \\\n   DataSource__Mode=CommonDataApi CommonDataApi__BaseUrl=https://devrwdwebwa9415.azurewebsites.net \\\n   dotnet run --project EprPackagingDataArchive --no-launch-profile\n\n3. Local, stubs. Needs nothing: dotnet run --project EprPackagingDataArchive. Fixture organisations 100123, 100456, 100987, 100999.\n\nREAL AND STUB IDS DO NOT MIX. 103844 and 132926 are real organisations in dev Synapse; 100123 is a fixture. A fixture id against real data returns an empty report, which looks like a bug and is not.\n\nWHAT REAL DATA CANNOT SHOW YET. The upstream procedure is a copy of the PayCal billing procedure, so it returns large producers only, packaging types HH, CW and PB plus HDC glass, no exports, accepted submissions only, and only organisations that reported both halves of a year.\n\nmeta.source says where a response came from: `common-data-api` or `stub`. meta.asOf is when Synapse last synced, never the clock; 1970 means the sync time has not been read yet, so call again."
   },
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:8085"
+    },
+    {
+      "key": "cdpBaseUrl",
+      "value": "https://ephemeral-protected.api.dev.cdp-int.defra.cloud/epr-packaging-data-archive"
+    },
+    {
+      "key": "cdpApiKey",
+      "value": ""
+    },
+    {
+      "key": "organisationId",
+      "value": "103844"
+    },
+    {
+      "key": "year",
+      "value": "2024"
+    }
+  ],
   "item": [
     {
-      "name": "Local",
+      "name": "1. CDP dev, real data",
+      "description": "AWS OpenVPN on, cdpApiKey set. Run top to bottom the first time: each step rules out one cause of failure for the next.",
+      "item": [
+        {
+          "name": "a. Is it up",
+          "item": [
+            {
+              "name": "Health",
+              "request": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "x-api-key",
+                    "value": "{{cdpApiKey}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{cdpBaseUrl}}/health",
+                  "host": [
+                    "{{cdpBaseUrl}}"
+                  ],
+                  "path": [
+                    "health"
+                  ],
+                  "query": []
+                },
+                "description": "If this fails after a deploy, the service did not start. The usual cause is deploying an image older than 0.6.0 with DataSource__Mode=CommonDataApi, which those builds refuse at startup."
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('200 OK', () => pm.response.to.have.status(200));"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "OpenAPI document",
+              "request": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "x-api-key",
+                    "value": "{{cdpApiKey}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{cdpBaseUrl}}/openapi/v1.json",
+                  "host": [
+                    "{{cdpBaseUrl}}"
+                  ],
+                  "path": [
+                    "openapi",
+                    "v1.json"
+                  ],
+                  "query": []
+                },
+                "description": "The contract, generated from the endpoint signatures."
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                      "console.log('paths:', Object.keys(pm.response.json().paths).join('\\n       '));"
+                    ]
+                  }
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "name": "b. Can CDP reach Azure",
+          "item": [
+            {
+              "name": "CD sync-time (the connectivity proof)",
+              "request": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "x-api-key",
+                    "value": "{{cdpApiKey}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{cdpBaseUrl}}/cd/sync-time",
+                  "host": [
+                    "{{cdpBaseUrl}}"
+                  ],
+                  "path": [
+                    "cd",
+                    "sync-time"
+                  ],
+                  "query": []
+                },
+                "description": "A CDP service calling the Azure Common Data API across the Squid proxy and Private Link. No Azure firewall change is involved: dev9's App Services are private, and CDP reaches them over the same private route waste-obligations uses. If this is 200, the packaging data requests below can work."
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                      "const b = pm.response.json();",
+                      "pm.test('upstream answered 200', () => pm.expect(b.upstream.status).to.eql(200));",
+                      "console.log('upstream:', b.upstream.url, '->', b.upstream.status, 'in', b.upstream.elapsedMs + 'ms');",
+                      "console.log('payload:', JSON.stringify(b.payload));"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "CD diagnostics",
+              "request": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "x-api-key",
+                    "value": "{{cdpApiKey}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{cdpBaseUrl}}/cd/diagnostics",
+                  "host": [
+                    "{{cdpBaseUrl}}"
+                  ],
+                  "path": [
+                    "cd",
+                    "diagnostics"
+                  ],
+                  "query": []
+                },
+                "description": "What the service thinks its Common Data API settings are, without secrets."
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                      "console.log(JSON.stringify(pm.response.json(), null, 2));"
+                    ]
+                  }
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "name": "c. Packaging data",
+          "item": [
+            {
+              "name": "One organisation, one year",
+              "request": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "x-api-key",
+                    "value": "{{cdpApiKey}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{cdpBaseUrl}}/organisations/{{organisationId}}/packaging-data?year={{year}}",
+                  "host": [
+                    "{{cdpBaseUrl}}"
+                  ],
+                  "path": [
+                    "organisations",
+                    "{{organisationId}}",
+                    "packaging-data"
+                  ],
+                  "query": [
+                    {
+                      "key": "year",
+                      "value": "{{year}}"
+                    }
+                  ]
+                },
+                "description": "The main case. `year` is the real submission year: 2024 means 2024. The archive adds one on the way upstream because the Common Data API counts in relative years, so you never have to.\n\nExpect 48 flat rows for organisation 103844, from two submissions: 2024-P1 and 2024-P4. Takes 15 to 25 seconds: every call goes to Azure and runs a stored procedure against Synapse. That wait is what the cache is for."
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                      "const b = pm.response.json();",
+                      "pm.test('served from the Common Data API, not from stubs', () => pm.expect(b.meta.source).to.eql('common-data-api'));",
+                      "pm.test('flat rows, no nesting', () => { pm.expect(b.data).to.be.an('array'); b.data.forEach(r => pm.expect(r).to.not.have.property('packagingData')); });",
+                      "pm.test('every row is accepted, because upstream returns nothing else', () => b.data.forEach(r => pm.expect(r.status).to.eql('accepted')));",
+                      "const periods = [...new Set(b.data.map(r => r.submissionPeriod))];",
+                      "console.log('rows:', b.data.length, '| periods:', periods.join(', ') || '(none)');",
+                      "console.log('data is current as of:', b.meta.asOf, b.meta.asOf.startsWith('1970') ? '  <- sync time not read yet, call again' : '');"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "One organisation, every year",
+              "request": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "x-api-key",
+                    "value": "{{cdpApiKey}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{cdpBaseUrl}}/organisations/{{organisationId}}/packaging-data",
+                  "host": [
+                    "{{cdpBaseUrl}}"
+                  ],
+                  "path": [
+                    "organisations",
+                    "{{organisationId}}",
+                    "packaging-data"
+                  ],
+                  "query": []
+                },
+                "description": "No year filter. Still floored at 2024 data, because the upstream procedure joins to registrations from 2025 onwards."
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                      "const b = pm.response.json();",
+                      "pm.test('served from the Common Data API, not from stubs', () => pm.expect(b.meta.source).to.eql('common-data-api'));",
+                      "pm.test('flat rows, no nesting', () => { pm.expect(b.data).to.be.an('array'); b.data.forEach(r => pm.expect(r).to.not.have.property('packagingData')); });",
+                      "pm.test('every row is accepted, because upstream returns nothing else', () => b.data.forEach(r => pm.expect(r.status).to.eql('accepted')));",
+                      "const periods = [...new Set(b.data.map(r => r.submissionPeriod))];",
+                      "console.log('rows:', b.data.length, '| periods:', periods.join(', ') || '(none)');",
+                      "console.log('data is current as of:', b.meta.asOf, b.meta.asOf.startsWith('1970') ? '  <- sync time not read yet, call again' : '');"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "Accepted only",
+              "request": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "x-api-key",
+                    "value": "{{cdpApiKey}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{cdpBaseUrl}}/organisations/{{organisationId}}/packaging-data?year={{year}}&status=accepted",
+                  "host": [
+                    "{{cdpBaseUrl}}"
+                  ],
+                  "path": [
+                    "organisations",
+                    "{{organisationId}}",
+                    "packaging-data"
+                  ],
+                  "query": [
+                    {
+                      "key": "year",
+                      "value": "{{year}}"
+                    },
+                    {
+                      "key": "status",
+                      "value": "accepted"
+                    }
+                  ]
+                },
+                "description": "The ticket's status filter. `accepted` is the only value this data source can serve."
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                      "const b = pm.response.json();",
+                      "pm.test('served from the Common Data API, not from stubs', () => pm.expect(b.meta.source).to.eql('common-data-api'));",
+                      "pm.test('flat rows, no nesting', () => { pm.expect(b.data).to.be.an('array'); b.data.forEach(r => pm.expect(r).to.not.have.property('packagingData')); });",
+                      "pm.test('every row is accepted, because upstream returns nothing else', () => b.data.forEach(r => pm.expect(r.status).to.eql('accepted')));",
+                      "const periods = [...new Set(b.data.map(r => r.submissionPeriod))];",
+                      "console.log('rows:', b.data.length, '| periods:', periods.join(', ') || '(none)');",
+                      "console.log('data is current as of:', b.meta.asOf, b.meta.asOf.startsWith('1970') ? '  <- sync time not read yet, call again' : '');"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "A second organisation",
+              "request": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "x-api-key",
+                    "value": "{{cdpApiKey}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{cdpBaseUrl}}/organisations/132926/packaging-data?year={{year}}",
+                  "host": [
+                    "{{cdpBaseUrl}}"
+                  ],
+                  "path": [
+                    "organisations",
+                    "132926",
+                    "packaging-data"
+                  ],
+                  "query": [
+                    {
+                      "key": "year",
+                      "value": "{{year}}"
+                    }
+                  ]
+                },
+                "description": "A different real organisation, to show it is not one hard-coded answer. Had 2024 data on 8 September 2026."
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                      "const b = pm.response.json();",
+                      "pm.test('served from the Common Data API, not from stubs', () => pm.expect(b.meta.source).to.eql('common-data-api'));",
+                      "pm.test('flat rows, no nesting', () => { pm.expect(b.data).to.be.an('array'); b.data.forEach(r => pm.expect(r).to.not.have.property('packagingData')); });",
+                      "pm.test('every row is accepted, because upstream returns nothing else', () => b.data.forEach(r => pm.expect(r.status).to.eql('accepted')));",
+                      "const periods = [...new Set(b.data.map(r => r.submissionPeriod))];",
+                      "console.log('rows:', b.data.length, '| periods:', periods.join(', ') || '(none)');",
+                      "console.log('data is current as of:', b.meta.asOf, b.meta.asOf.startsWith('1970') ? '  <- sync time not read yet, call again' : '');"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "An organisation with no data",
+              "request": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "x-api-key",
+                    "value": "{{cdpApiKey}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{cdpBaseUrl}}/organisations/999999/packaging-data?year={{year}}",
+                  "host": [
+                    "{{cdpBaseUrl}}"
+                  ],
+                  "path": [
+                    "organisations",
+                    "999999",
+                    "packaging-data"
+                  ],
+                  "query": [
+                    {
+                      "key": "year",
+                      "value": "{{year}}"
+                    }
+                  ]
+                },
+                "description": "200 with an empty list, deliberately not 404. This source only ever sees rows that survived the upstream filters, so it cannot tell 'no such organisation' from 'reported nothing chargeable'. A 404 would assert something we do not know.\n\nIf a REAL organisation comes back empty, check the year first, then whether it reported only one half of the year."
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('200 OK, not 404', () => pm.response.to.have.status(200));",
+                      "pm.test('no rows', () => pm.expect(pm.response.json().data).to.be.an('array').that.is.empty);"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "Organisation id that is not a number",
+              "request": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "x-api-key",
+                    "value": "{{cdpApiKey}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{cdpBaseUrl}}/organisations/not-a-number/packaging-data",
+                  "host": [
+                    "{{cdpBaseUrl}}"
+                  ],
+                  "path": [
+                    "organisations",
+                    "not-a-number",
+                    "packaging-data"
+                  ],
+                  "query": []
+                },
+                "description": "Upstream keys on the EPR reference number as an integer, so this cannot name anything: 404."
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('404 Not Found', () => pm.response.to.have.status(404));"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "Invalid year",
+              "request": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "x-api-key",
+                    "value": "{{cdpApiKey}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{cdpBaseUrl}}/organisations/{{organisationId}}/packaging-data?year=1999",
+                  "host": [
+                    "{{cdpBaseUrl}}"
+                  ],
+                  "path": [
+                    "organisations",
+                    "{{organisationId}}",
+                    "packaging-data"
+                  ],
+                  "query": [
+                    {
+                      "key": "year",
+                      "value": "1999"
+                    }
+                  ]
+                },
+                "description": "Validated at the edge so a typo is a 400, not an empty report."
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('400 Bad Request', () => pm.response.to.have.status(400));",
+                      "pm.test('says what was wrong', () => pm.expect(pm.response.json().title).to.eql('Invalid year'));"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "Invalid status",
+              "request": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "x-api-key",
+                    "value": "{{cdpApiKey}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{cdpBaseUrl}}/organisations/{{organisationId}}/packaging-data?status=banana",
+                  "host": [
+                    "{{cdpBaseUrl}}"
+                  ],
+                  "path": [
+                    "organisations",
+                    "{{organisationId}}",
+                    "packaging-data"
+                  ],
+                  "query": [
+                    {
+                      "key": "status",
+                      "value": "banana"
+                    }
+                  ]
+                },
+                "description": "Only accepted and rejected are recognised."
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('400 Bad Request', () => pm.response.to.have.status(400));",
+                      "pm.test('says what was wrong', () => pm.expect(pm.response.json().title).to.eql('Invalid status'));"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "Rejected submissions (known gap)",
+              "request": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "x-api-key",
+                    "value": "{{cdpApiKey}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{cdpBaseUrl}}/organisations/{{organisationId}}/packaging-data?year={{year}}&status=rejected",
+                  "host": [
+                    "{{cdpBaseUrl}}"
+                  ],
+                  "path": [
+                    "organisations",
+                    "{{organisationId}}",
+                    "packaging-data"
+                  ],
+                  "query": [
+                    {
+                      "key": "year",
+                      "value": "{{year}}"
+                    },
+                    {
+                      "key": "status",
+                      "value": "rejected"
+                    }
+                  ]
+                },
+                "description": "KNOWN GAP. The upstream procedure filters on Regulator_Status = 'Accepted', so rejected submissions are not reachable through this data source. The provider refuses rather than return an empty report that would look authoritative, and today that refusal surfaces as a 500.\n\nIt goes away when the endpoint moves to cdp.sp_GetPomDataByOrganisation, which returns status as a column. Until then, do not demo this one."
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('refused rather than answered with an empty report', () => pm.expect(pm.response.code).to.be.oneOf([500, 501]));"
+                    ]
+                  }
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "name": "d. Still on stubs in this mode",
+          "description": "Only the packaging data report has an upstream source. These keep their stub providers, so they take fixture ids.\n\nKNOWN WART: in CommonDataApi mode the service has a single source descriptor, so these responses carry meta.source = common-data-api even though the data is fixtures. Trust the folder name, not the meta block, until that is fixed.",
+          "item": [
+            {
+              "name": "Organisation",
+              "request": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "x-api-key",
+                    "value": "{{cdpApiKey}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{cdpBaseUrl}}/organisations/100123",
+                  "host": [
+                    "{{cdpBaseUrl}}"
+                  ],
+                  "path": [
+                    "organisations",
+                    "100123"
+                  ],
+                  "query": []
+                },
+                "description": "Fixture organisation."
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('200 OK', () => pm.response.to.have.status(200));"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "Organisation submissions",
+              "request": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "x-api-key",
+                    "value": "{{cdpApiKey}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{cdpBaseUrl}}/organisations/100123/submissions",
+                  "host": [
+                    "{{cdpBaseUrl}}"
+                  ],
+                  "path": [
+                    "organisations",
+                    "100123",
+                    "submissions"
+                  ],
+                  "query": []
+                },
+                "description": "Fixture submissions, newest first."
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('200 OK', () => pm.response.to.have.status(200));"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "Compliance scheme reporting status",
+              "request": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "x-api-key",
+                    "value": "{{cdpApiKey}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{cdpBaseUrl}}/compliance-schemes/CS-004/reporting-status?submissionPeriod=2026-H1",
+                  "host": [
+                    "{{cdpBaseUrl}}"
+                  ],
+                  "path": [
+                    "compliance-schemes",
+                    "CS-004",
+                    "reporting-status"
+                  ],
+                  "query": [
+                    {
+                      "key": "submissionPeriod",
+                      "value": "2026-H1"
+                    }
+                  ]
+                },
+                "description": "Fixture scheme."
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('200 OK', () => pm.response.to.have.status(200));"
+                    ]
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "2. Local, real data",
+      "description": "Azure VPN on, service started in CommonDataApi mode (command in the collection description). Same requests, same answers as CDP.",
+      "item": [
+        {
+          "name": "Health",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/health",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "health"
+              ],
+              "query": []
+            },
+            "description": ""
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "One organisation, one year",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/organisations/{{organisationId}}/packaging-data?year={{year}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "organisations",
+                "{{organisationId}}",
+                "packaging-data"
+              ],
+              "query": [
+                {
+                  "key": "year",
+                  "value": "{{year}}"
+                }
+              ]
+            },
+            "description": "The main case. `year` is the real submission year: 2024 means 2024. The archive adds one on the way upstream because the Common Data API counts in relative years, so you never have to.\n\nExpect 48 flat rows for organisation 103844, from two submissions: 2024-P1 and 2024-P4. Takes 15 to 25 seconds: every call goes to Azure and runs a stored procedure against Synapse. That wait is what the cache is for."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "const b = pm.response.json();",
+                  "pm.test('served from the Common Data API, not from stubs', () => pm.expect(b.meta.source).to.eql('common-data-api'));",
+                  "pm.test('flat rows, no nesting', () => { pm.expect(b.data).to.be.an('array'); b.data.forEach(r => pm.expect(r).to.not.have.property('packagingData')); });",
+                  "pm.test('every row is accepted, because upstream returns nothing else', () => b.data.forEach(r => pm.expect(r.status).to.eql('accepted')));",
+                  "const periods = [...new Set(b.data.map(r => r.submissionPeriod))];",
+                  "console.log('rows:', b.data.length, '| periods:', periods.join(', ') || '(none)');",
+                  "console.log('data is current as of:', b.meta.asOf, b.meta.asOf.startsWith('1970') ? '  <- sync time not read yet, call again' : '');"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "One organisation, every year",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/organisations/{{organisationId}}/packaging-data",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "organisations",
+                "{{organisationId}}",
+                "packaging-data"
+              ],
+              "query": []
+            },
+            "description": "No year filter. Still floored at 2024 data, because the upstream procedure joins to registrations from 2025 onwards."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "const b = pm.response.json();",
+                  "pm.test('served from the Common Data API, not from stubs', () => pm.expect(b.meta.source).to.eql('common-data-api'));",
+                  "pm.test('flat rows, no nesting', () => { pm.expect(b.data).to.be.an('array'); b.data.forEach(r => pm.expect(r).to.not.have.property('packagingData')); });",
+                  "pm.test('every row is accepted, because upstream returns nothing else', () => b.data.forEach(r => pm.expect(r.status).to.eql('accepted')));",
+                  "const periods = [...new Set(b.data.map(r => r.submissionPeriod))];",
+                  "console.log('rows:', b.data.length, '| periods:', periods.join(', ') || '(none)');",
+                  "console.log('data is current as of:', b.meta.asOf, b.meta.asOf.startsWith('1970') ? '  <- sync time not read yet, call again' : '');"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Accepted only",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/organisations/{{organisationId}}/packaging-data?year={{year}}&status=accepted",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "organisations",
+                "{{organisationId}}",
+                "packaging-data"
+              ],
+              "query": [
+                {
+                  "key": "year",
+                  "value": "{{year}}"
+                },
+                {
+                  "key": "status",
+                  "value": "accepted"
+                }
+              ]
+            },
+            "description": "The ticket's status filter. `accepted` is the only value this data source can serve."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "const b = pm.response.json();",
+                  "pm.test('served from the Common Data API, not from stubs', () => pm.expect(b.meta.source).to.eql('common-data-api'));",
+                  "pm.test('flat rows, no nesting', () => { pm.expect(b.data).to.be.an('array'); b.data.forEach(r => pm.expect(r).to.not.have.property('packagingData')); });",
+                  "pm.test('every row is accepted, because upstream returns nothing else', () => b.data.forEach(r => pm.expect(r.status).to.eql('accepted')));",
+                  "const periods = [...new Set(b.data.map(r => r.submissionPeriod))];",
+                  "console.log('rows:', b.data.length, '| periods:', periods.join(', ') || '(none)');",
+                  "console.log('data is current as of:', b.meta.asOf, b.meta.asOf.startsWith('1970') ? '  <- sync time not read yet, call again' : '');"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "A second organisation",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/organisations/132926/packaging-data?year={{year}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "organisations",
+                "132926",
+                "packaging-data"
+              ],
+              "query": [
+                {
+                  "key": "year",
+                  "value": "{{year}}"
+                }
+              ]
+            },
+            "description": "A different real organisation, to show it is not one hard-coded answer. Had 2024 data on 8 September 2026."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "const b = pm.response.json();",
+                  "pm.test('served from the Common Data API, not from stubs', () => pm.expect(b.meta.source).to.eql('common-data-api'));",
+                  "pm.test('flat rows, no nesting', () => { pm.expect(b.data).to.be.an('array'); b.data.forEach(r => pm.expect(r).to.not.have.property('packagingData')); });",
+                  "pm.test('every row is accepted, because upstream returns nothing else', () => b.data.forEach(r => pm.expect(r.status).to.eql('accepted')));",
+                  "const periods = [...new Set(b.data.map(r => r.submissionPeriod))];",
+                  "console.log('rows:', b.data.length, '| periods:', periods.join(', ') || '(none)');",
+                  "console.log('data is current as of:', b.meta.asOf, b.meta.asOf.startsWith('1970') ? '  <- sync time not read yet, call again' : '');"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "An organisation with no data",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/organisations/999999/packaging-data?year={{year}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "organisations",
+                "999999",
+                "packaging-data"
+              ],
+              "query": [
+                {
+                  "key": "year",
+                  "value": "{{year}}"
+                }
+              ]
+            },
+            "description": "200 with an empty list, deliberately not 404. This source only ever sees rows that survived the upstream filters, so it cannot tell 'no such organisation' from 'reported nothing chargeable'. A 404 would assert something we do not know.\n\nIf a REAL organisation comes back empty, check the year first, then whether it reported only one half of the year."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK, not 404', () => pm.response.to.have.status(200));",
+                  "pm.test('no rows', () => pm.expect(pm.response.json().data).to.be.an('array').that.is.empty);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Organisation id that is not a number",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/organisations/not-a-number/packaging-data",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "organisations",
+                "not-a-number",
+                "packaging-data"
+              ],
+              "query": []
+            },
+            "description": "Upstream keys on the EPR reference number as an integer, so this cannot name anything: 404."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('404 Not Found', () => pm.response.to.have.status(404));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Invalid year",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/organisations/{{organisationId}}/packaging-data?year=1999",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "organisations",
+                "{{organisationId}}",
+                "packaging-data"
+              ],
+              "query": [
+                {
+                  "key": "year",
+                  "value": "1999"
+                }
+              ]
+            },
+            "description": "Validated at the edge so a typo is a 400, not an empty report."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('400 Bad Request', () => pm.response.to.have.status(400));",
+                  "pm.test('says what was wrong', () => pm.expect(pm.response.json().title).to.eql('Invalid year'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Invalid status",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/organisations/{{organisationId}}/packaging-data?status=banana",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "organisations",
+                "{{organisationId}}",
+                "packaging-data"
+              ],
+              "query": [
+                {
+                  "key": "status",
+                  "value": "banana"
+                }
+              ]
+            },
+            "description": "Only accepted and rejected are recognised."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('400 Bad Request', () => pm.response.to.have.status(400));",
+                  "pm.test('says what was wrong', () => pm.expect(pm.response.json().title).to.eql('Invalid status'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Rejected submissions (known gap)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/organisations/{{organisationId}}/packaging-data?year={{year}}&status=rejected",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "organisations",
+                "{{organisationId}}",
+                "packaging-data"
+              ],
+              "query": [
+                {
+                  "key": "year",
+                  "value": "{{year}}"
+                },
+                {
+                  "key": "status",
+                  "value": "rejected"
+                }
+              ]
+            },
+            "description": "KNOWN GAP. The upstream procedure filters on Regulator_Status = 'Accepted', so rejected submissions are not reachable through this data source. The provider refuses rather than return an empty report that would look authoritative, and today that refusal surfaces as a 500.\n\nIt goes away when the endpoint moves to cdp.sp_GetPomDataByOrganisation, which returns status as a column. Until then, do not demo this one."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('refused rather than answered with an empty report', () => pm.expect(pm.response.code).to.be.oneOf([500, 501]));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "3. Local, stubs",
+      "description": "Default local run, no VPN, no configuration. The ticket's acceptance paths against fixtures, unchanged from the original collection.",
       "item": [
         {
           "name": "1. Health and contract",
@@ -75,19 +1167,20 @@
           ]
         },
         {
-          "name": "2. The ticket: nested packaging data",
+          "name": "2. The ticket: packaging data",
           "item": [
             {
-              "name": "All submissions, nested",
+              "name": "All rows",
               "event": [
                 {
                   "listen": "test",
                   "script": {
                     "type": "text/javascript",
                     "exec": [
-                      "const b=pm.response.json();",
-                      "pm.test('200 with nested shape', () => { pm.response.to.have.status(200); pm.expect(b.data.organisation.organisationId).to.eql('100123'); pm.expect(b.data.submissions.length).to.eql(3); });",
-                      "pm.test('stub source declared', () => pm.expect(b.meta.source).to.eql('stub'));"
+                      "const b = pm.response.json();",
+                      "pm.test('200 with flat rows', () => { pm.response.to.have.status(200); pm.expect(b.data).to.be.an('array').that.is.not.empty; });",
+                      "pm.test('every row carries the organisation and its submission', () => b.data.forEach(r => { pm.expect(r.organisationId).to.eql('100123'); pm.expect(r.submissionId).to.be.a('string'); }));",
+                      "console.log('rows:', b.data.length, '| submissions:', [...new Set(b.data.map(r => r.submissionPeriod))].join(', '));"
                     ]
                   }
                 }
@@ -96,12 +1189,11 @@
                 "method": "GET",
                 "header": [],
                 "url": {
-                  "raw": "{{baseUrl}}/v1/organisations/100123/packaging-data",
+                  "raw": "{{baseUrl}}/organisations/100123/packaging-data",
                   "host": [
                     "{{baseUrl}}"
                   ],
                   "path": [
-                    "v1",
                     "organisations",
                     "100123",
                     "packaging-data"
@@ -119,8 +1211,8 @@
                   "script": {
                     "type": "text/javascript",
                     "exec": [
-                      "const b=pm.response.json();",
-                      "pm.test('only 2025 periods', () => b.data.submissions.forEach(s => pm.expect(s.submissionPeriod).to.match(/^2025-/)));"
+                      "const b = pm.response.json();",
+                      "pm.test('only 2025 periods', () => b.data.forEach(r => pm.expect(r.submissionPeriod).to.match(/^2025-/)));"
                     ]
                   }
                 }
@@ -129,12 +1221,11 @@
                 "method": "GET",
                 "header": [],
                 "url": {
-                  "raw": "{{baseUrl}}/v1/organisations/100123/packaging-data?year=2025",
+                  "raw": "{{baseUrl}}/organisations/100123/packaging-data?year=2025",
                   "host": [
                     "{{baseUrl}}"
                   ],
                   "path": [
-                    "v1",
                     "organisations",
                     "100123",
                     "packaging-data"
@@ -158,8 +1249,8 @@
                   "script": {
                     "type": "text/javascript",
                     "exec": [
-                      "const b=pm.response.json();",
-                      "pm.test('single rejected submission', () => { pm.expect(b.data.submissions.length).to.eql(1); pm.expect(b.data.submissions[0].status).to.eql('RejectedByRegulator'); });"
+                      "const b = pm.response.json();",
+                      "pm.test('only rows from the rejected 2025-H1 submission', () => { pm.expect(b.data).to.not.be.empty; b.data.forEach(r => { pm.expect(r.status).to.eql('rejected'); pm.expect(r.submissionPeriod).to.eql('2025-H1'); }); });"
                     ]
                   }
                 }
@@ -168,12 +1259,11 @@
                 "method": "GET",
                 "header": [],
                 "url": {
-                  "raw": "{{baseUrl}}/v1/organisations/100123/packaging-data?year=2025&status=rejected",
+                  "raw": "{{baseUrl}}/organisations/100123/packaging-data?year=2025&status=rejected",
                   "host": [
                     "{{baseUrl}}"
                   ],
                   "path": [
-                    "v1",
                     "organisations",
                     "100123",
                     "packaging-data"
@@ -210,12 +1300,11 @@
                 "method": "GET",
                 "header": [],
                 "url": {
-                  "raw": "{{baseUrl}}/v1/organisations/100123/packaging-data?status=banana",
+                  "raw": "{{baseUrl}}/organisations/100123/packaging-data?status=banana",
                   "host": [
                     "{{baseUrl}}"
                   ],
                   "path": [
-                    "v1",
                     "organisations",
                     "100123",
                     "packaging-data"
@@ -248,12 +1337,11 @@
                 "method": "GET",
                 "header": [],
                 "url": {
-                  "raw": "{{baseUrl}}/v1/organisations/100123/packaging-data?year=1999",
+                  "raw": "{{baseUrl}}/organisations/100123/packaging-data?year=1999",
                   "host": [
                     "{{baseUrl}}"
                   ],
                   "path": [
-                    "v1",
                     "organisations",
                     "100123",
                     "packaging-data"
@@ -285,12 +1373,11 @@
                 "method": "GET",
                 "header": [],
                 "url": {
-                  "raw": "{{baseUrl}}/v1/organisations/000000/packaging-data",
+                  "raw": "{{baseUrl}}/organisations/000000/packaging-data",
                   "host": [
                     "{{baseUrl}}"
                   ],
                   "path": [
-                    "v1",
                     "organisations",
                     "000000",
                     "packaging-data"
@@ -308,7 +1395,7 @@
                   "script": {
                     "type": "text/javascript",
                     "exec": [
-                      "pm.test('200, empty submissions', () => { pm.response.to.have.status(200); pm.expect(pm.response.json().data.submissions.length).to.eql(0); });"
+                      "pm.test('200, empty list', () => { pm.response.to.have.status(200); pm.expect(pm.response.json().data).to.be.an('array').that.is.empty; });"
                     ]
                   }
                 }
@@ -317,12 +1404,11 @@
                 "method": "GET",
                 "header": [],
                 "url": {
-                  "raw": "{{baseUrl}}/v1/organisations/100999/packaging-data",
+                  "raw": "{{baseUrl}}/organisations/100999/packaging-data",
                   "host": [
                     "{{baseUrl}}"
                   ],
                   "path": [
-                    "v1",
                     "organisations",
                     "100999",
                     "packaging-data"
@@ -335,283 +1421,6 @@
           ]
         }
       ]
-    },
-    {
-      "name": "On CDP (needs cdpApiKey)",
-      "item": [
-        {
-          "name": "Common Data API Connection",
-          "item": [
-            {
-              "name": "CD diagnostics",
-              "request": {
-                "method": "GET",
-                "header": [
-                  {
-                    "key": "x-api-key",
-                    "value": "{{cdpApiKey}}"
-                  }
-                ],
-                "url": {
-                  "raw": "{{cdpBaseUrl}}/cd/diagnostics",
-                  "host": [
-                    "{{cdpBaseUrl}}"
-                  ],
-                  "path": [
-                    "cd",
-                    "diagnostics"
-                  ]
-                },
-                "description": "Reports configuration without calling upstream; authTokenConfigured shows presence only, never the value."
-              },
-              "response": []
-            },
-            {
-              "name": "CD sync-time (the connectivity proof)",
-              "request": {
-                "method": "GET",
-                "header": [
-                  {
-                    "key": "x-api-key",
-                    "value": "{{cdpApiKey}}"
-                  }
-                ],
-                "url": {
-                  "raw": "{{cdpBaseUrl}}/cd/sync-time",
-                  "host": [
-                    "{{cdpBaseUrl}}"
-                  ],
-                  "path": [
-                    "cd",
-                    "sync-time"
-                  ]
-                },
-                "description": "A CDP service calling the Azure Common Data API and getting 200, across the Squid proxy and Private Link. The upstream block carries method, URL, status and elapsed ms."
-              },
-              "response": []
-            },
-            {
-              "name": "CD submissions by organisation",
-              "request": {
-                "method": "GET",
-                "header": [
-                  {
-                    "key": "x-api-key",
-                    "value": "{{cdpApiKey}}"
-                  }
-                ],
-                "url": {
-                  "raw": "{{cdpBaseUrl}}/cd/submissions?organisationReference=100123&pageSize=5",
-                  "host": [
-                    "{{cdpBaseUrl}}"
-                  ],
-                  "path": [
-                    "cd",
-                    "submissions"
-                  ],
-                  "query": [
-                    {
-                      "key": "organisationReference",
-                      "value": "100123"
-                    },
-                    {
-                      "key": "pageSize",
-                      "value": "5"
-                    }
-                  ]
-                },
-                "description": "Zero rows expected until a spoke with a populated warehouse is confirmed; connectivity itself returns 200."
-              },
-              "response": []
-            },
-            {
-              "name": "CD poms sample",
-              "request": {
-                "method": "GET",
-                "header": [
-                  {
-                    "key": "x-api-key",
-                    "value": "{{cdpApiKey}}"
-                  }
-                ],
-                "url": {
-                  "raw": "{{cdpBaseUrl}}/cd/poms?relativeYear=2026&take=10",
-                  "host": [
-                    "{{cdpBaseUrl}}"
-                  ],
-                  "path": [
-                    "cd",
-                    "poms"
-                  ],
-                  "query": [
-                    {
-                      "key": "relativeYear",
-                      "value": "2026"
-                    },
-                    {
-                      "key": "take",
-                      "value": "10"
-                    }
-                  ]
-                },
-                "description": "Currently 502s from dev9's Synapse stored procedure: warehouse population issue, being chased in the dev thread."
-              },
-              "response": []
-            }
-          ]
-        },
-        {
-          "name": "Packaging Data",
-          "item": [
-            {
-              "name": "CDP health",
-              "request": {
-                "method": "GET",
-                "header": [
-                  {
-                    "key": "x-api-key",
-                    "value": "{{cdpApiKey}}"
-                  }
-                ],
-                "url": {
-                  "raw": "{{cdpBaseUrl}}/health",
-                  "host": [
-                    "{{cdpBaseUrl}}"
-                  ],
-                  "path": [
-                    "health"
-                  ]
-                },
-                "description": "Set cdpApiKey to a Developer API key from the Portal (24h expiry). 404 here usually means zero running instances, not a bad URL."
-              },
-              "response": []
-            },
-            {
-              "name": "CDP organisations/packaging-data",
-              "request": {
-                "method": "GET",
-                "header": [
-                  {
-                    "key": "x-api-key",
-                    "value": "{{cdpApiKey}}"
-                  }
-                ],
-                "url": {
-                  "raw": "{{cdpBaseUrl}}/v1/organisations/100123/packaging-data",
-                  "host": [
-                    "{{cdpBaseUrl}}"
-                  ],
-                  "path": [
-                    "v1",
-                    "organisations",
-                    "100123",
-                    "packaging-data"
-                  ]
-                },
-                "description": "Only works once the nested-report PR is merged and the Portal has redeployed 0.4.0; dev currently runs 0.3.0."
-              },
-              "response": []
-            }
-          ]
-        },
-        {
-          "name": "Out of Scope",
-          "item": [
-            {
-              "name": "CDP organisations",
-              "request": {
-                "method": "GET",
-                "header": [
-                  {
-                    "key": "x-api-key",
-                    "value": "{{cdpApiKey}}"
-                  }
-                ],
-                "url": {
-                  "raw": "{{cdpBaseUrl}}/v1/organisations/100123/packaging-data",
-                  "host": [
-                    "{{cdpBaseUrl}}"
-                  ],
-                  "path": [
-                    "v1",
-                    "organisations",
-                    "100123",
-                    "packaging-data"
-                  ]
-                },
-                "description": "Only works once the nested-report PR is merged and the Portal has redeployed 0.4.0; dev currently runs 0.3.0."
-              },
-              "response": []
-            },
-            {
-              "name": "CDP organisations/submissions",
-              "request": {
-                "method": "GET",
-                "header": [
-                  {
-                    "key": "x-api-key",
-                    "value": "{{cdpApiKey}}"
-                  }
-                ],
-                "url": {
-                  "raw": "{{cdpBaseUrl}}/v1/organisations/100123/packaging-data",
-                  "host": [
-                    "{{cdpBaseUrl}}"
-                  ],
-                  "path": [
-                    "v1",
-                    "organisations",
-                    "100123",
-                    "packaging-data"
-                  ]
-                },
-                "description": "Only works once the nested-report PR is merged and the Portal has redeployed 0.4.0; dev currently runs 0.3.0."
-              },
-              "response": []
-            },
-            {
-              "name": "CDP openapi",
-              "request": {
-                "method": "GET",
-                "header": [
-                  {
-                    "key": "x-api-key",
-                    "value": "{{cdpApiKey}}"
-                  }
-                ],
-                "url": {
-                  "raw": "{{cdpBaseUrl}}/v1/organisations/100123/packaging-data",
-                  "host": [
-                    "{{cdpBaseUrl}}"
-                  ],
-                  "path": [
-                    "v1",
-                    "organisations",
-                    "100123",
-                    "packaging-data"
-                  ]
-                },
-                "description": "Only works once the nested-report PR is merged and the Portal has redeployed 0.4.0; dev currently runs 0.3.0."
-              },
-              "response": []
-            }
-          ]
-        }
-      ]
-    }
-  ],
-  "variable": [
-    {
-      "key": "baseUrl",
-      "value": "http://localhost:8085"
-    },
-    {
-      "key": "cdpBaseUrl",
-      "value": "https://ephemeral-protected.api.dev.cdp-int.defra.cloud/epr-packaging-data-archive"
-    },
-    {
-      "key": "cdpApiKey",
-      "value": ""
     }
   ]
 }

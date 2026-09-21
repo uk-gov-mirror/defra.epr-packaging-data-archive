@@ -20,7 +20,7 @@ public static class OrganisationEndpoints
 {
     public static RouteGroupBuilder MapOrganisationEndpoints(this IEndpointRouteBuilder app)
     {
-        var group = app.MapGroup("/v1/organisations").WithTags("Organisations");
+        var group = app.MapGroup("/organisations").WithTags("Organisations");
 
         group.MapGet("/{organisationId}", GetOrganisation)
             .WithName("GetOrganisation")
@@ -36,7 +36,7 @@ public static class OrganisationEndpoints
 
         group.MapGet("/{organisationId}/packaging-data", GetPackagingData)
             .WithName("GetOrganisationPackagingData")
-            .WithSummary("The organisation, its submissions, and the packaging rows inside each, "
+            .WithSummary("The organisation's packaging data as flat rows, each carrying its submission, "
                          + "filterable by year and submission status.");
 
         group.MapGet("/{organisationId}/packaging-data/summary", GetPackagingDataSummary)
@@ -102,7 +102,7 @@ public static class OrganisationEndpoints
             : TypedResults.Ok(submission.InEnvelope(source.AsOf, source.Name));
     }
 
-    private static async Task<Results<Ok<Envelope<PackagingDataReport>>, NotFound, BadRequest<ProblemDetails>>>
+    private static async Task<Results<Ok<Envelope<IReadOnlyCollection<PackagingDataRow>>>, NotFound, BadRequest<ProblemDetails>>>
         GetPackagingData(
             [FromRoute] string organisationId,
             [FromQuery] int? year,
@@ -133,10 +133,10 @@ public static class OrganisationEndpoints
             });
         }
 
-        var report = await packagingData.GetReportAsync(
+        var rows = await packagingData.GetReportAsync(
             organisationId, new ReportQuery { Year = year, Status = status }, cancellationToken);
 
-        if (report is null) return TypedResults.NotFound();
+        if (rows is null) return TypedResults.NotFound();
 
         // One audit event per read, routed to the CDP audit store. A deliberate starting point for
         // the ticket's open "Audit?" question rather than settled policy; see DECISIONS.md 7.
@@ -144,7 +144,7 @@ public static class OrganisationEndpoints
             "Packaging data report requested for organisation {OrganisationId} (year: {Year}, status: {Status})",
             organisationId, year, status ?? "any");
 
-        return TypedResults.Ok(report.InEnvelope(source.AsOf, source.Name));
+        return TypedResults.Ok(rows.InEnvelope(source.AsOf, source.Name));
     }
 
     private static async Task<Results<Ok<Envelope<PackagingDataSummary>>, NotFound, BadRequest<ProblemDetails>>>

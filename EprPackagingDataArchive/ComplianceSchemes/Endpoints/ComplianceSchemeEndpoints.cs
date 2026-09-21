@@ -19,7 +19,7 @@ public static class ComplianceSchemeEndpoints
 {
     public static RouteGroupBuilder MapComplianceSchemeEndpoints(this IEndpointRouteBuilder app)
     {
-        var group = app.MapGroup("/v1/compliance-schemes").WithTags("Compliance schemes");
+        var group = app.MapGroup("/compliance-schemes").WithTags("Compliance schemes");
 
         group.MapGet("/{schemeId}/members", GetMembers)
             .WithName("GetSchemeMembers")

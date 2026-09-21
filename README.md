@@ -51,7 +51,7 @@ Two decisions are still open, both tracked outside this repo:
 ```bash
 dotnet restore --source https://api.nuget.org/v3/index.json   # see NuGet sources below
 dotnet build
-dotnet test                                                   # 84 tests, about 1 second
+dotnet test                                                   # 121 tests, about 1 second
 dotnet run --project EprPackagingDataArchive
 ```
 
@@ -59,22 +59,24 @@ Then:
 
 ```bash
 curl http://localhost:8085/health
-curl http://localhost:8085/v1/organisations/100123
-curl "http://localhost:8085/v1/compliance-schemes/CS-004/reporting-status?submissionPeriod=2026-H1"
+curl http://localhost:8085/organisations/100123
+curl "http://localhost:8085/organisations/100123/packaging-data?year=2025"
+curl "http://localhost:8085/compliance-schemes/CS-004/reporting-status?submissionPeriod=2026-H1"
 ```
 
 No database is needed. Nothing else has to be running.
 
 ## Endpoints
 
-All are `GET`, all are prefixed `/v1`.
+All are `GET`. There is no version prefix: nothing outside the team calls this API yet, and one can
+be added back when a breaking change needs to coexist with real consumers.
 
 | Endpoint | Answers |
 |---|---|
 | `/organisations/{organisationId}` | Who is this organisation, what size, which nation, in a scheme or not |
 | `/organisations/{organisationId}/submissions` | What has been filed for them, newest first |
 | `/organisations/{organisationId}/submissions/{submissionId}` | One submission, with validation counts and whether it has reached the warehouse |
-| `/organisations/{organisationId}/packaging-data` | The reported lines |
+| `/organisations/{organisationId}/packaging-data` | The reported lines, flat, filterable by `?year=` and `?status=accepted\|rejected`. The endpoint with real data behind it; see below |
 | `/organisations/{organisationId}/packaging-data/summary` | Tonnage totals, broken down by material, activity and nation |
 | `/compliance-schemes/{schemeId}/members` | Which producers report through this scheme |
 | `/compliance-schemes/{schemeId}/packaging-data/summary` | Tonnage rolled up across the whole scheme |
@@ -149,6 +151,45 @@ Collections add `meta.page`:
 "page": { "number": 1, "size": 50, "total": 412 }
 ```
 
+### Packaging data
+
+`/organisations/{organisationId}/packaging-data` returns one flat row per packaging line. The
+submission each row came from is on the row, rather than rows being nested under submissions
+(values illustrative):
+
+```json
+{
+  "data": [
+    {
+      "organisationId": "103844",
+      "subsidiaryId": "114897",
+      "submissionId": "103844-2024-P1",
+      "submissionPeriod": "2024-P1",
+      "status": "accepted",
+      "packagingActivity": "SO",
+      "packagingType": "HH",
+      "packagingClass": "P1",
+      "packagingMaterial": "AL",
+      "packagingMaterialSubtype": null,
+      "packagingMaterialWeight": 76445,
+      "packagingMaterialUnits": null,
+      "transitionalPackagingUnits": null,
+      "fromCountry": null,
+      "toCountry": null,
+      "ramRagRating": null
+    }
+  ],
+  "meta": { "asOf": "2026-09-21T11:51:08+00:00", "source": "common-data-api", "page": null }
+}
+```
+
+- Rows are ordered by period, then packaging type, then material, in every mode.
+- `status` is `accepted`, `rejected` or `pending`, in every mode.
+- A field the source does not provide is `null`, never an empty string.
+- There is no per-row id. Upstream rows carry no key, and one derived from type, material and class
+  collided on real data. `submissionId` is derived from organisation and period, for the same reason.
+- An unknown organisation is `404`; a known one with nothing reported is `200` with an empty list.
+
 ## Where the data comes from
 
 Endpoints depend on three interfaces and never on a data source:
@@ -166,8 +207,9 @@ them, switching on configuration:
 DataSource__Mode = Stub | CommonDataApi | Projection
 ```
 
-Only `Stub` is implemented. The other two throw at startup with a message naming the phase they
-arrive in. Moving to a real source is a change in that one file, not a change to any endpoint.
+`Stub` and `CommonDataApi` are implemented; `Projection` throws at startup with a message naming the
+phase it arrives in. In `CommonDataApi` mode only the packaging data rows come from upstream; the other
+endpoints keep their stub providers, because there is no upstream equivalent for them yet. Moving to a real source is a change in that one file, not a change to any endpoint.
 
 If you add a provider, keep its interface in domain language. The moment an interface mirrors the
 shape of whatever happens to be behind it, swapping implementations stops being a registration change.
@@ -175,7 +217,7 @@ shape of whatever happens to be behind it, swapping implementations stops being 
 ## Testing
 
 ```bash
-dotnet test                                                # 84 tests
+dotnet test                                                # 121 tests
 dotnet test --logger "console;verbosity=normal"            # print every test name
 dotnet test --filter "FullyQualifiedName~StubOrganisationProviderTest"
 dotnet test --filter "FullyQualifiedName~Health_endpoint_is_available"
@@ -199,7 +241,31 @@ two or three adapter has to satisfy.
 dotnet run --project EprPackagingDataArchive
 ```
 
-Uses the `EprPackagingDataArchive` launch profile and listens on http://localhost:8085.
+Uses the `EprPackagingDataArchive` launch profile and listens on http://localhost:8085, serving stubs.
+
+To run against real data instead, connect the Azure VPN and switch the data source:
+
+```bash
+ASPNETCORE_ENVIRONMENT=Development ASPNETCORE_URLS=http://localhost:8085 \
+DataSource__Mode=CommonDataApi \
+CommonDataApi__BaseUrl=https://devrwdwebwa9415.azurewebsites.net \
+  dotnet run --project EprPackagingDataArchive --no-launch-profile
+```
+
+Real organisations in dev include `103844` and `132926`; stub ids such as `100123` return an empty list.
+Each call takes around 20 seconds, because it goes to Azure and runs a query against Synapse.
+
+### On CDP
+
+In dev the service runs in `CommonDataApi` mode, set in `cdp-app-config`. A protected-zone service is not
+reachable from a laptop, so there are two ways to call it:
+
+- **The CDP terminal** (Portal, service page, Terminal tab). Calls the service directly with no time limit:
+  `curl -s "https://epr-packaging-data-archive.dev.cdp-int.defra.cloud/organisations/103844/packaging-data?year=2024" | jq`
+- **Postman, through the developer API key endpoint.** Fine for fast endpoints, but that route gives up at
+  5 seconds, so real packaging data calls fail there until the archive has its own store.
+
+The Postman collection in this repo covers both, plus local runs.
 
 ### Docker Compose
 

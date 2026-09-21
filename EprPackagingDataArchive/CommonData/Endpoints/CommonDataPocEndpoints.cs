@@ -9,7 +9,7 @@ namespace EprPackagingDataArchive.CommonData.Endpoints;
 /// <summary>
 /// Proof of concept routes for reaching the Azure Common Data API.
 ///
-/// Deliberately outside /v1 and excluded from the OpenAPI document, because these are not part of
+/// Deliberately outside the service contract and excluded from the OpenAPI document, because these are not part of
 /// the product contract and should not appear in a consumer's generated client. They pass warehouse
 /// responses through unmapped, so that what the data really looks like can be seen before deciding
 /// how to present it.
